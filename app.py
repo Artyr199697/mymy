@@ -16,7 +16,6 @@ import time
 from datetime import datetime
 import piexif
 import io
-import hashlib
 
 # Конфигурация страницы
 st.set_page_config(
@@ -27,7 +26,7 @@ st.set_page_config(
 )
 
 # 30 ПРОФЕССИОНАЛЬНЫХ ЦВЕТОВЫХ СХЕМ
-# Все схемы имеют заметные изменения для гарантированной уникальности
+# Все схемы имеют РЕАЛЬНЫЕ заметные изменения цветов
 PROFESSIONAL_COLOR_SCHEMES = [
     # Теплые тона (1-8)
     {"name": "Золотой_рассвет", "hue": 15, "sat": 8, "val": 5},
@@ -75,45 +74,67 @@ class AdvancedImageUniqueizer:
     def __init__(self, settings):
         self.settings = settings
 
-    def shift_hsv(self, img, hue_shift, sat_shift, val_shift):
+    def shift_hsv_fast(self, img, hue_shift, sat_shift, val_shift):
         """
-        Профессиональный сдвиг в HSV пространстве
-        Использует быстрый numpy для обработки
+        БЫСТРЫЙ И РАБОЧИЙ сдвиг в HSV пространстве
+        Использует правильный алгоритм изменения цветов
         """
-        try:
-            # Конвертация в numpy array
-            img_array = np.array(img, dtype=np.float32) / 255.0
+        # Конвертация в numpy array
+        img_array = np.array(img, dtype=np.float32) / 255.0
 
-            # Конвертация RGB -> HSV через векторизацию
-            h_array = np.zeros(img_array.shape[:2], dtype=np.float32)
-            s_array = np.zeros(img_array.shape[:2], dtype=np.float32)
-            v_array = np.zeros(img_array.shape[:2], dtype=np.float32)
+        # Покомпонентная конвертация RGB -> HSV
+        r, g, b = img_array[:,:,0], img_array[:,:,1], img_array[:,:,2]
 
-            for i in range(img_array.shape[0]):
-                for j in range(img_array.shape[1]):
-                    r, g, b = img_array[i, j]
-                    h, s, v = colorsys.rgb_to_hsv(r, g, b)
-                    h_array[i, j] = h
-                    s_array[i, j] = s
-                    v_array[i, j] = v
+        maxc = np.maximum(np.maximum(r, g), b)
+        minc = np.minimum(np.minimum(r, g), b)
+        v = maxc
 
-            # Применение сдвигов
-            h_array = (h_array + hue_shift / 360.0) % 1.0
-            s_array = np.clip(s_array + sat_shift / 100.0, 0, 1)
-            v_array = np.clip(v_array + val_shift / 100.0, 0, 1)
+        deltac = maxc - minc
+        s = deltac / (maxc + 1e-10)
 
-            # Конвертация обратно в RGB
-            rgb_array = np.zeros_like(img_array)
-            for i in range(img_array.shape[0]):
-                for j in range(img_array.shape[1]):
-                    h, s, v = h_array[i, j], s_array[i, j], v_array[i, j]
-                    r, g, b = colorsys.hsv_to_rgb(h, s, v)
-                    rgb_array[i, j] = [r, g, b]
+        # Вычисление Hue
+        deltac = np.where(deltac == 0, 1, deltac)
+        rc = (maxc - r) / deltac
+        gc = (maxc - g) / deltac
+        bc = (maxc - b) / deltac
 
-            rgb_array = (rgb_array * 255).astype(np.uint8)
-            return Image.fromarray(rgb_array)
-        except:
-            return img
+        h = np.zeros_like(v)
+        h = np.where((r == maxc), bc - gc, h)
+        h = np.where((g == maxc), 2.0 + rc - bc, h)
+        h = np.where((b == maxc), 4.0 + gc - rc, h)
+        h = (h / 6.0) % 1.0
+
+        # Применение сдвигов
+        h = (h + hue_shift / 360.0) % 1.0
+        s = np.clip(s + sat_shift / 100.0, 0, 1)
+        v = np.clip(v + val_shift / 100.0, 0, 1)
+
+        # Конвертация HSV -> RGB
+        i = (h * 6.0).astype(int)
+        f = (h * 6.0) - i
+        p = v * (1.0 - s)
+        q = v * (1.0 - s * f)
+        t = v * (1.0 - s * (1.0 - f))
+        i = i % 6
+
+        # Собираем RGB обратно
+        conditions = [
+            (i == 0),
+            (i == 1),
+            (i == 2),
+            (i == 3),
+            (i == 4),
+            (i == 5)
+        ]
+
+        r = np.select(conditions, [v, q, p, p, t, v])
+        g = np.select(conditions, [t, v, v, q, p, p])
+        b = np.select(conditions, [p, p, t, v, v, q])
+
+        rgb_array = np.stack([r, g, b], axis=2)
+        rgb_array = (np.clip(rgb_array, 0, 1) * 255).astype(np.uint8)
+
+        return Image.fromarray(rgb_array)
 
     def add_micro_noise(self, img, intensity):
         """Добавление незаметного шума для изменения хеша"""
@@ -164,8 +185,7 @@ class AdvancedImageUniqueizer:
             software_id = f"PhotoEditor_{random.randint(1000, 9999)}"
             exif_dict["0th"][piexif.ImageIFD.Software] = software_id.encode()
 
-            # Случайная дата (в пределах последних 30 дней)
-            days_ago = random.randint(1, 30)
+            # Случайная дата
             random_date = datetime.now()
             date_str = random_date.strftime("%Y:%m:%d %H:%M:%S")
             exif_dict["0th"][piexif.ImageIFD.DateTime] = date_str.encode()
@@ -173,11 +193,12 @@ class AdvancedImageUniqueizer:
             # Ориентация
             exif_dict["0th"][piexif.ImageIFD.Orientation] = 1
 
-            # Случайные данные камеры (выглядит естественно)
+            # Случайные данные камеры
             cameras = [
-                b"iPhone 12", b"iPhone 13", b"iPhone 14",
-                b"Samsung Galaxy", b"Xiaomi Redmi",
-                b"Canon EOS", b"Nikon D5600"
+                b"iPhone 12", b"iPhone 13", b"iPhone 14", b"iPhone 15",
+                b"Samsung Galaxy S21", b"Samsung Galaxy S22",
+                b"Xiaomi Redmi Note 10", b"Xiaomi Redmi Note 11",
+                b"Canon EOS 2000D", b"Nikon D5600", b"Sony Alpha 6000"
             ]
             exif_dict["0th"][piexif.ImageIFD.Make] = random.choice(cameras)
 
@@ -188,19 +209,19 @@ class AdvancedImageUniqueizer:
 
     def uniqueize(self, img, scheme_index, variant_number):
         """
-        Профессиональная уникализация под Avito 2024-2025
+        ПРОФЕССИОНАЛЬНАЯ УНИКАЛИЗАЦИЯ
 
-        Стратегия:
-        1. Цветовая схема (основное изменение)
-        2. Тонкие adjustments (контраст, яркость, насыщенность)
-        3. Микро-шум (изменяет хеш)
-        4. Микро-трансформации (изменяет pHash)
-        5. EXIF метаданные (критически важно!)
+        Каждое изображение проходит:
+        1. Цветовую схему (ГЛАВНОЕ - меняет цвета реально!)
+        2. Микро-adjustments
+        3. Шум (меняет MD5 хеш)
+        4. Ресайз/кроп (меняет pHash)
+        5. EXIF (критично для Avito)
         """
 
-        # 1. Цветовая схема
+        # 1. ЦВЕТОВАЯ СХЕМА (ГЛАВНОЕ!)
         scheme = PROFESSIONAL_COLOR_SCHEMES[scheme_index % len(PROFESSIONAL_COLOR_SCHEMES)]
-        img = self.shift_hsv(
+        img = self.shift_hsv_fast(
             img,
             scheme['hue'],
             scheme['sat'],
@@ -212,49 +233,40 @@ class AdvancedImageUniqueizer:
 
         # Контраст
         if self.settings['adjust_contrast']:
-            factor = random.uniform(
-                1 - intensity * 0.02,
-                1 + intensity * 0.02
-            )
+            factor = random.uniform(0.98, 1.02)
             img = ImageEnhance.Contrast(img).enhance(factor)
 
         # Яркость
         if self.settings['adjust_brightness']:
-            factor = random.uniform(
-                1 - intensity * 0.015,
-                1 + intensity * 0.015
-            )
+            factor = random.uniform(0.99, 1.01)
             img = ImageEnhance.Brightness(img).enhance(factor)
 
         # Насыщенность
         if self.settings['adjust_saturation']:
-            factor = random.uniform(
-                1 - intensity * 0.03,
-                1 + intensity * 0.03
-            )
+            factor = random.uniform(0.97, 1.03)
             img = ImageEnhance.Color(img).enhance(factor)
 
         # Резкость
         if self.settings['adjust_sharpness'] and random.random() < 0.3:
-            factor = random.uniform(1, 1 + intensity * 0.04)
+            factor = random.uniform(1.0, 1.04)
             img = ImageEnhance.Sharpness(img).enhance(factor)
 
-        # 3. Микро-шум (важно для изменения хеша!)
+        # 3. Микро-шум (важно для MD5!)
         if self.settings['add_noise']:
-            noise_level = intensity * 1.0
+            noise_level = intensity * 0.8
             img = self.add_micro_noise(img, noise_level)
 
         # 4. Микро-размытие
-        if self.settings['add_blur'] and random.random() < 0.4:
-            img = img.filter(ImageFilter.GaussianBlur(radius=intensity * 0.1))
+        if self.settings['add_blur'] and random.random() < 0.3:
+            img = img.filter(ImageFilter.GaussianBlur(radius=0.1))
 
-        # 5. Микро-ресайз (изменяет pHash)
+        # 5. Микро-ресайз (важно для pHash!)
         if self.settings['micro_resize']:
-            img = self.micro_resize(img, max_percent=intensity * 0.3)
+            img = self.micro_resize(img, max_percent=0.5)
 
         # 6. Микро-кроп
         if self.settings['micro_crop']:
-            img = self.micro_crop(img, max_pixels=int(intensity * 1.0))
+            img = self.micro_crop(img, max_pixels=2)
 
         return img
 
@@ -263,11 +275,11 @@ def process_folder(source_folder, num_copies, settings, progress_callback=None):
     """
     Обработка папки с фото для Avito
 
-    Логика:
-    - Исходная папка: "GPT PLUS" с 6 фото
-    - Создается: "GPT PLUS_1", "GPT PLUS_2", "GPT PLUS_3"
-    - В каждой папке: 1.jpg, 2.jpg, 3.jpg, 4.jpg, 5.jpg, 6.jpg
-    - ВСЕ фото уникализированы (оригинал НЕ включается)
+    ЛОГИКА:
+    - Исходная папка: "GPT PLUS" с 10 фото
+    - Создается: "GPT PLUS_1", "GPT PLUS_2", ... "GPT PLUS_N"
+    - В КАЖДОЙ папке: 10 УНИКАЛИЗИРОВАННЫХ фото (1.jpg, 2.jpg... 10.jpg)
+    - Цвета РЕАЛЬНО изменены по цветовым схемам!
     """
     source_path = Path(source_folder)
     folder_name = source_path.name
@@ -309,7 +321,7 @@ def process_folder(source_folder, num_copies, settings, progress_callback=None):
                 if img.mode != 'RGB':
                     img = img.convert('RGB')
 
-                # УНИКАЛИЗАЦИЯ (БЕЗ ОРИГИНАЛА)
+                # УНИКАЛИЗАЦИЯ (ЦВЕТА МЕНЯЮТСЯ!)
                 unique_img = uniqueizer.uniqueize(img, copy_num - 1, img_index)
 
                 # Автоматическое определение формата
@@ -360,7 +372,7 @@ def process_folder(source_folder, num_copies, settings, progress_callback=None):
 # Основной интерфейс
 def main():
     st.title("🎨 Image Uniqueizer Pro для Avito 2024-2025")
-    st.markdown("**Профессиональная уникализация с 30 цветовыми схемами**")
+    st.markdown("**30 цветовых схем • Реальное изменение цветов • Без оригинала**")
 
     # Боковая панель с настройками
     with st.sidebar:
@@ -397,7 +409,7 @@ def main():
 
         jpeg_quality = st.slider("Качество JPEG", 85, 98, 93)
 
-        st.info("Формат определяется автоматически")
+        st.info("📌 Формат определяется автоматически")
 
     # Основная область
     col1, col2 = st.columns([2, 1])
@@ -406,9 +418,9 @@ def main():
         st.subheader("📁 Папка с фото")
 
         folder_path = st.text_input(
-            "Путь к папке с изображениями",
+            "Путь к папке",
             placeholder="C:\\Users\\Name\\Desktop\\GPT PLUS",
-            help="Полный путь к папке с фотографиями одного объявления"
+            help="Если в папке 10 фото → в каждой выходной папке будет 10 уникализированных фото"
         )
 
         st.markdown("**Или загрузите файлы:**")
@@ -421,18 +433,18 @@ def main():
     with col2:
         st.subheader("🔢 Количество")
         num_copies = st.number_input(
-            "Сколько объявлений?",
+            "Объявлений?",
             min_value=1,
             max_value=30,
             value=5,
-            help="Рекомендуется 3-7 для Avito"
+            help="Рекомендуется 3-7"
         )
 
         st.success(f"""
         **Результат:**
         - Папок: **{num_copies}**
-        - Все фото уникализированы
-        - 30 цветовых схем
+        - Все фото с новыми цветами
+        - 30 схем на выбор
         """)
 
     # Кнопка обработки
@@ -467,7 +479,7 @@ def main():
             folder_path = str(temp_folder)
 
         if not folder_path or not Path(folder_path).exists():
-            st.error("❌ Укажите корректный путь к папке или загрузите файлы")
+            st.error("❌ Укажите путь к папке или загрузите файлы")
             return
 
         # Прогресс-бар
@@ -492,7 +504,7 @@ def main():
 
             col1, col2, col3 = st.columns(3)
             with col1:
-                st.metric("Создано папок", len(result['created_folders']))
+                st.metric("Папок", len(result['created_folders']))
             with col2:
                 st.metric("Фото в каждой", result['images_per_folder'])
             with col3:
@@ -503,44 +515,50 @@ def main():
             for folder in result['created_folders']:
                 st.code(str(folder.absolute()), language=None)
 
-            st.info("""
+            st.info(f"""
             ✨ **Готово к загрузке на Avito:**
-            - Все фото уникализированы (оригинала нет)
-            - 30 профессиональных цветовых схем
-            - Изменены EXIF, хеши, размеры
-            - Визуально выглядят отлично!
+            - В каждой папке: **{result['images_per_folder']} фото**
+            - Все с ИЗМЕНЕННЫМИ цветами
+            - EXIF, хеши - разные
+            - Визуально выглядят профессионально!
             """)
         else:
             st.error(f"❌ Ошибка: {result.get('error')}")
 
     # Информация
     st.markdown("---")
-    with st.expander("ℹ️ Как это работает? (Avito 2024-2025)"):
+    with st.expander("ℹ️ Как это работает?"):
         st.markdown("""
-        ### Стратегия уникализации для Avito:
+        ### Стратегия для Avito 2024-2025:
 
         **1. Цветовые схемы (30 вариантов)**
-        - Теплые тона (8 схем): золотой, закатный, янтарный...
-        - Холодные тона (8 схем): морозный, ледяной, бирюзовый...
-        - Насыщенные (8 схем): яркий, сочный, тропический...
-        - Винтаж (6 схем): ретро, выцветший, пастельный...
+        Каждая схема РЕАЛЬНО меняет цвета в HSV пространстве:
+        - Теплые (8): золотой, закатный, янтарный...
+        - Холодные (8): морозный, ледяной, бирюзовый...
+        - Насыщенные (8): яркий, сочный, тропический...
+        - Винтаж (6): ретро, выцветший, пастельный...
 
         **2. Технические изменения:**
-        - ✅ Изменение MD5/SHA хеша (шум)
-        - ✅ Изменение pHash (ресайз, кроп)
-        - ✅ Изменение EXIF (критически важно!)
-        - ✅ Изменение размера файла
-        - ✅ Случайные adjustments
+        - ✅ MD5/SHA хеш (шум)
+        - ✅ pHash (ресайз, кроп)
+        - ✅ EXIF данные (критично!)
+        - ✅ Размер файла
 
-        **3. Почему это работает на Avito:**
-        - Avito проверяет: MD5 хеш, pHash, EXIF данные
-        - Все эти параметры изменяются
-        - TinEye, Google Images не находят дубликаты
-        - Визуально - профессиональные цвета
+        **3. Пример работы:**
+        ```
+        Исходная папка: "GPT PLUS" (10 фото)
+
+        Результат (5 объявлений):
+        GPT PLUS_1/ → 10 фото с "Золотой рассвет"
+        GPT PLUS_2/ → 10 фото с "Закатный"
+        GPT PLUS_3/ → 10 фото с "Янтарный"
+        GPT PLUS_4/ → 10 фото с "Медовый"
+        GPT PLUS_5/ → 10 фото с "Персиковый"
+        ```
 
         **4. Рекомендации:**
-        - Интенсивность: 3-5 (оптимально)
-        - Количество объявлений: 3-7
+        - Интенсивность: 3-5
+        - Объявлений: 3-7
         - Обязательно: EXIF, шум, ресайз
         - Размещать с интервалом 2-4 часа
         """)
