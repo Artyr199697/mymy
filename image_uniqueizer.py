@@ -14,23 +14,25 @@ import random
 from pathlib import Path
 import colorsys
 import threading
+from datetime import datetime
 
 
 class ImageUniqueizerApp:
     """Главное приложение для уникализации изображений"""
 
     # Цветовые схемы (название: сдвиг Hue в градусах)
+    # ИСПРАВЛЕНО: Увеличены сдвиги для ЗАМЕТНОГО изменения цветов!
     COLOR_SCHEMES = [
-        ("Оригинал+", 0),
-        ("Теплый закат", 15),
-        ("Холодный", -30),
-        ("Виноградный", 25),
-        ("Морской", -45),
-        ("Лавандовый", 35),
-        ("Лимонный", -15),
-        ("Коралловый", 20),
-        ("Бирюзовый", -40),
-        ("Персиковый", 10)
+        ("Золотистый", 60),      # Красный → Желтый
+        ("Холодный", -90),       # Красный → Циановый
+        ("Теплый", 90),          # Синий → Желтый
+        ("Морской", -60),        # Желтый → Синий
+        ("Виноградный", 120),    # Красный → Фиолетовый
+        ("Лимонный", -120),      # Фиолетовый → Желтый
+        ("Розовый", 30),         # Небольшой сдвиг
+        ("Бирюзовый", -30),      # Небольшой сдвиг
+        ("Янтарный", 45),        # Средний сдвиг
+        ("Лавандовый", -45)      # Средний сдвиг
     ]
 
     # Поддерживаемые форматы
@@ -276,8 +278,9 @@ class ImageUniqueizerApp:
             total_operations = len(self.selected_files) * variant_count
             current_operation = 0
 
-            # Создание выходной папки
-            output_dir = Path("uniqueized_images")
+            # Создание выходной папки с временной меткой (НЕ перезаписываем!)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_dir = Path(f"uniqueized_images_{timestamp}")
             output_dir.mkdir(exist_ok=True)
 
             for file_path in self.selected_files:
@@ -332,9 +335,8 @@ class ImageUniqueizerApp:
     def _uniqueize_image(self, img, hue_shift):
         """Применение уникализации к изображению"""
 
-        # 1. Сдвиг цветовой схемы (Hue shift)
-        if hue_shift != 0:
-            img = self._shift_hue(img, hue_shift)
+        # 1. Сдвиг цветовой схемы (Hue shift) - ВСЕГДА применяется!
+        img = self._shift_hue(img, hue_shift)
 
         # 2. Случайные изменения
 
