@@ -333,41 +333,42 @@ class ImageUniqueizerApp:
             self.process_btn.config(state=tk.NORMAL, bg='#4CAF50')
 
     def _uniqueize_image(self, img, hue_shift):
-        """Применение уникализации к изображению"""
+        """Применение уникализации к изображению для Avito 2025"""
 
         # 1. Сдвиг цветовой схемы (Hue shift) - ВСЕГДА применяется!
         img = self._shift_hue(img, hue_shift)
 
-        # 2. Случайные изменения
+        # 2. Адаптивные параметры в зависимости от яркости цветов
+        is_bright_color = abs(hue_shift) >= 60  # Яркие цвета
 
-        # Контраст (95-115%)
-        contrast_factor = random.uniform(0.95, 1.15)
-        enhancer = ImageEnhance.Contrast(img)
-        img = enhancer.enhance(contrast_factor)
+        if is_bright_color:
+            # Для ярких цветов - ОЧЕНЬ МЯГКО (чтобы глаза не болели!)
+            contrast_factor = random.uniform(0.85, 0.98)  # СНИЖЕНА контрастность
+            brightness_factor = random.uniform(0.92, 1.02)  # СНИЖЕНА яркость
+            saturation_factor = random.uniform(0.80, 0.95)  # СНИЖЕНА насыщенность
+        else:
+            # Для нейтральных цветов - мягкая обработка
+            contrast_factor = random.uniform(0.92, 1.10)
+            brightness_factor = random.uniform(0.95, 1.05)
+            saturation_factor = random.uniform(0.90, 1.08)
 
-        # Яркость (97-108%)
-        brightness_factor = random.uniform(0.97, 1.08)
-        enhancer = ImageEnhance.Brightness(img)
-        img = enhancer.enhance(brightness_factor)
+        img = ImageEnhance.Contrast(img).enhance(contrast_factor)
+        img = ImageEnhance.Brightness(img).enhance(brightness_factor)
+        img = ImageEnhance.Color(img).enhance(saturation_factor)
 
-        # Насыщенность (92-112%)
-        saturation_factor = random.uniform(0.92, 1.12)
-        enhancer = ImageEnhance.Color(img)
-        img = enhancer.enhance(saturation_factor)
-
-        # Шум (0.5-1.5%, едва заметный)
-        noise_level = random.uniform(0.005, 0.015)
+        # 3. Микро-шум (гарантирует уникальность для Avito 2025)
+        noise_level = random.uniform(0.008, 0.020)
         img = self._add_noise(img, noise_level)
 
-        # Размытие (0.3px, 50% вероятность)
-        if random.random() < 0.5:
-            img = img.filter(ImageFilter.GaussianBlur(radius=0.3))
+        # 4. Лёгкое размытие (для ярких - всегда, для нейтральных - иногда)
+        if is_bright_color or random.random() < 0.6:
+            blur_radius = 0.25 if is_bright_color else 0.35
+            img = img.filter(ImageFilter.GaussianBlur(radius=blur_radius))
 
-        # Резкость (100-115%, 40% вероятность)
-        if random.random() < 0.4:
-            sharpness_factor = random.uniform(1.0, 1.15)
-            enhancer = ImageEnhance.Sharpness(img)
-            img = enhancer.enhance(sharpness_factor)
+        # 5. Резкость (для нейтральных цветов - чаще)
+        if not is_bright_color and random.random() < 0.5:
+            sharpness_factor = random.uniform(1.05, 1.20)
+            img = ImageEnhance.Sharpness(img).enhance(sharpness_factor)
 
         return img
 
