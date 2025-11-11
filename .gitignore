@@ -1,5 +1,7 @@
 # Выходные файлы программы
 uniqueized_images/
+test_images_*/
+temp_upload/
 
 # Тестовые изображения
 test_images/
